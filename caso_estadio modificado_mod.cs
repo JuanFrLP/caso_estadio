@@ -1,18 +1,26 @@
-using System;
+﻿using System;
+using System.IO;
+using QRCoder;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 
-namespace BoletoEstadio
+namespace BoletoEstadio 
 {
-    class Program
+    class Program 
     {
-        static int CAPACIDAD = 100;
+        static int CAPACIDAD = 5; 
         
-        static int[] idOriginal = new int[CAPACIDAD];
+        static int[] idOriginal = new int[CAPACIDAD]; 
         static int[] hashGenerado = new int[CAPACIDAD];
-        static bool[] espacioOcupado = new bool[CAPACIDAD];
+        static bool[] espacioOcupado = new bool[CAPACIDAD]; 
         static bool[] boletoValidado = new bool[CAPACIDAD];
 
-        static void Main(string[] args)
+        static void Main(string[] args) 
         {
+            // configuración requerida por la librería QuestPDF
+            QuestPDF.Settings.License = LicenseType.Community;
+
             bool ejecutando = true;
 
             while (ejecutando)
@@ -46,47 +54,45 @@ namespace BoletoEstadio
 
         static int CalcularHash8Digitos(int numero)
         {
-            double calculo = numero * Math.E * Math.PI;
-            
-            long parteEntera = (long)Math.Truncate(calculo);
-            
-            int hashFinal = (int)(Math.Abs(parteEntera) % 100000000);
-            
+            double calculo = (numero % 100000000) * 31 * Math.E * Math.PI; 
+            long parteEntera = (long)Math.Truncate(calculo); 
+            int hashFinal = (int)(Math.Abs(parteEntera) % 100000000); 
             return hashFinal;
         }
 
         static void GenerarBoleto()
         {
             Console.Write("Ingrese su numero de usuario/ID: ");
-            if (!int.TryParse(Console.ReadLine(), out int id))
+            if (!int.TryParse(Console.ReadLine(), out int id) || id < 0)
             {
-                Console.WriteLine("error, no se pude generar");
+                Console.WriteLine("error, ingrese un numero entero positivo");
                 return;
             }
 
             int hash = CalcularHash8Digitos(id);
-            
-            int indiceInicio = hash % CAPACIDAD;
+            int indiceInicio = hash % CAPACIDAD; 
             int indice = indiceInicio;
 
-            do
+            // Búsqueda previa para evitar registros duplicados
+            do 
             {
+                if (espacioOcupado[indice] && idOriginal[indice] == id) 
+                {
+                    Console.WriteLine("error, no se pude generar duplicados");
+                    return; 
+                }
+
                 if (!espacioOcupado[indice]) 
                 {
                     break; 
                 }
                 
-                if (espacioOcupado[indice] && idOriginal[indice] == id)
-                {
-                    Console.WriteLine("error, no se pude generar");
-                }
-                
-                indice = (indice + 1) % CAPACIDAD;
+                indice = (indice + 1) % CAPACIDAD; 
                 
             } while (indice != indiceInicio);
 
             indice = indiceInicio;
-            bool insertado = false;
+            bool insertado = false; 
 
             do
             {
@@ -100,18 +106,21 @@ namespace BoletoEstadio
                     break;
                 }
                 
-                indice = (indice + 1) % CAPACIDAD;
+                indice = (indice + 1) % CAPACIDAD; 
                 
-            } while (indice != indiceInicio);
+            } while (indice != indiceInicio); 
 
             if (insertado)
             {
+                // Llamada a la funcion del PDF
+                GenerarBoletoPDF(id, hash);
+                
                 Console.WriteLine("boleto generado");
-                Console.WriteLine("QR Data -> ID: " + id + " | HASH: " + hash.ToString("D8"));
+                Console.WriteLine("ID: " + id + " | Codigo: " + hash.ToString("D8"));
             }
             else
             {
-                Console.WriteLine("error, no se pude generar"); 
+                Console.WriteLine("error, limite de capacidad alcanzado"); 
             }
         }
 
@@ -120,7 +129,7 @@ namespace BoletoEstadio
             Console.Write("Ingrese ID del boleto a validar: ");
             if (!int.TryParse(Console.ReadLine(), out int id))
             {
-                Console.WriteLine("error, entrada invalida");
+                Console.WriteLine("error, ID invalido");
                 return;
             }
 
@@ -159,8 +168,51 @@ namespace BoletoEstadio
 
             if (!encontrado)
             {
-                Console.WriteLine("error, boleto no registrado");
+                Console.WriteLine("error, boleto inexistente o no generado");
             }
+        }
+
+        static void GenerarBoletoPDF(int id, int hash)
+        {
+            string datosQR = "ID: " + id + " | HASH: " + hash.ToString("D8");
+
+            byte[] qrImageBytes;
+            using (QRCodeGenerator qrGenerator = new QRCodeGenerator())
+            {
+                QRCodeData qrCodeData = qrGenerator.CreateQrCode(datosQR, QRCodeGenerator.ECCLevel.Q);
+                using (PngByteQRCode qrCode = new PngByteQRCode(qrCodeData))
+                {
+                    qrImageBytes = qrCode.GetGraphic(10);
+                }
+            }
+
+            string nombreArchivo = "Boleto_" + id + ".pdf";
+            
+            Document.Create(container =>
+            {
+                container.Page(page =>
+                {
+                    page.Size(PageSizes.A6);
+                    page.Margin(1, Unit.Centimetre);
+                    page.PageColor(Colors.White);
+                    page.DefaultTextStyle(x => x.FontSize(12));
+
+                    page.Header()
+                        .Text("Boleto de Ingreso - General")
+                        .SemiBold().FontSize(16).FontColor(Colors.Black);
+
+                    page.Content().Column(column =>
+                    {
+                        column.Spacing(10);
+                        column.Item().Text("Valido para 1 persona");
+                        column.Item().Text("ID de Usuario: " + id);
+                        column.Item().Text("Codigo de Seguridad: " + hash.ToString("D8"));
+                        
+                        column.Item().Image(qrImageBytes);
+                    });
+                });
+            })
+            .GeneratePdf(nombreArchivo);
         }
     }
 }
